@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>記者会見サバイバル</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@700;900&display=swap');
+
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        /* プレイヤーダメージ演出 */
+        @keyframes playerDamage {
+            0% { opacity: 0.6; }
+            100% { opacity: 0; }
+        }
+        .animate-player-damage {
+            animation: playerDamage 0.5s ease-out forwards;
+        }
+
+        /* 画面揺れ */
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            10%, 30%, 50%, 70%, 90% { transform: translate(-4px, -4px) rotate(-2deg); }
+            20%, 40%, 60%, 80% { transform: translate(4px, 4px) rotate(2deg); }
+        }
+        .animate-shake {
+            animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+        }
+
+        /* 質問ワードの基本スタイル */
+        .word-bubble {
+            position: absolute;
+            background-color: white;
+            color: #1f2937;
+            border: 3px solid #374151;
+            padding: 8px 16px 14px 16px;
+            border-radius: 20px;
+            font-weight: 900;
+            font-size: 1.1rem;
+            cursor: pointer;
+            user-select: none;
+            box-shadow: 4px 4px 0px rgba(0,0,0,0.5);
+            white-space: nowrap;
+            clip-path: polygon(0% 0%, 100% 0%, 100% 80%, 75% 80%, 75% 100%, 60% 80%, 0% 80%);
+            transform-origin: center;
+            transition: transform 0.05s;
+        }
+        .word-bubble:active {
+            transform: scale(0.9) !important;
+        }
+
+        /* ボタン外れ担当者（緊急ワード）赤い点滅 */
+        .urgent-word {
+            animation: flashRed 0.3s infinite alternate;
+            z-index: 40 !important;
+        }
+        @keyframes flashRed {
+            0% { background-color: #ef4444; color: white; border-color: #991b1b; box-shadow: 4px 4px 0px #7f1d1d; }
+            100% { background-color: #7f1d1d; color: #fecaca; border-color: #450a0a; box-shadow: 4px 4px 0px #450a0a; }
+        }
+        
+        .urgent-bar-bg {
+            width: 100%;
+            height: 6px;
+            background: rgba(0,0,0,0.5);
+            margin-top: 4px;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .urgent-bar-fill {
+            width: 100%;
+            height: 100%;
+            background: #fca5a5;
+            transition: width 5s linear;
+        }
+
+        /* ダメージ・チェインのポップアップ文字 */
+        .popup-text {
+            position: absolute;
+            pointer-events: none;
+            z-index: 60;
+            font-weight: 900;
+            animation: floatUp 0.8s ease-out forwards;
+        }
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translate(-50%, 0) scale(0.5); }
+            20% { transform: translate(-50%, -20px) scale(1.2); }
+            100% { opacity: 0; transform: translate(-50%, -60px) scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+
+<div id="game-container" class="relative w-full h-[100dvh] overflow-hidden bg-gradient-to-b from-gray-700 to-gray-900">
+    <div id="damage-overlay" class="absolute inset-0 bg-red-600 opacity-0 pointer-events-none z-45"></div>
+
+    <!-- UIエリア (上部120px固定) -->
+    <div id="ui-area" class="absolute top-0 left-0 w-full h-[120px] bg-black/80 backdrop-blur-md z-50 flex items-center justify-between px-4 py-2 pointer-events-none border-b border-gray-700">
+        <div class="flex-1 max-w-[200px]">
+            <div class="text-sm font-bold text-gray-300 mb-1">記者メンタル <span id="hp-text" class="text-white">100</span>/100</div>
+            <div class="w-full h-5 bg-gray-800 rounded-full border-2 border-gray-600 overflow-hidden">
+                <div id="hp-bar" class="h-full bg-gradient-to-r from-green-500 to-green-400 w-full transition-all duration-200"></div>
+            </div>
+        </div>
+        <div class="flex gap-4 items-center">
+            <div class="bg-gray-800/80 px-3 py-1 rounded-lg border border-gray-600 text-center min-w-[70px]">
+                <div class="text-[10px] text-gray-400 font-bold">成功数</div>
+                <div id="score-text" class="text-2xl font-black text-green-400 leading-none">0</div>
+            </div>
+            <div class="bg-gray-800/80 px-3 py-1 rounded-lg border border-gray-600 text-center min-w-[70px]">
+                <div class="text-[10px] text-gray-400 font-bold">CHAIN</div>
+                <div id="chain-text" class="text-2xl font-black text-blue-400 leading-none">0</div>
+            </div>
+        </div>
+        <div class="text-center min-w-[80px]">
+            <div id="timer-text" class="text-4xl font-black tabular-nums tracking-tighter drop-shadow-md text-white">30.0</div>
+        </div>
+    </div>
+
+    <!-- ボスエリア -->
+    <div id="boss-container" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center z-20 pointer-events-none">
+        <div id="boss-face" class="text-8xl drop-shadow-[0_10px_10px_rgba(0,0,0,0.8)] transition-all">👨‍💼</div>
+        <div class="bg-black/80 px-4 py-1 rounded-full text-sm mt-2 font-bold border border-gray-500 shadow-lg">代表取締役社長</div>
+    </div>
+
+    <!-- ワードレイヤー -->
+    <div id="words-layer" class="absolute inset-0 pointer-events-none z-30"></div>
+
+    <!-- タイトル画面 -->
+    <div id="title-screen" class="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-gray-900/95 backdrop-blur-sm px-4">
+        <h1 class="text-5xl md:text-7xl font-black mb-2 text-center leading-tight drop-shadow-lg">
+            記者会見<br><span class="text-red-500 text-6xl md:text-8xl">サバイバル</span>
+        </h1>
+        <div class="bg-black/60 p-6 rounded-2xl mb-8 border border-gray-700 max-w-lg w-full shadow-2xl">
+            <h2 class="text-xl font-bold text-yellow-400 mb-4 border-b border-gray-600 pb-2">ルール</h2>
+            <ul class="text-sm md:text-base space-y-3 font-bold text-gray-200">
+                <li><span class="text-green-400 text-lg">⭕ 成功:</span> 直前と<span class="text-yellow-300">「違う」</span>質問をタップ。</li>
+                <li><span class="text-red-400 text-lg">❌ 失敗:</span> 直前と<span class="text-red-300">「同じ」</span>質問をタップ。<br>
+                    <span class="text-xs text-gray-400">※画面内にある同ワードの数に比例して大ダメージ！</span>
+                </li>
+                <li class="bg-red-950/50 p-2 rounded border border-red-800">
+                    <span class="text-red-400">⚠️ 緊急事態:</span> <br>
+                    下部に出現する<span class="text-red-300 font-black">「赤い点滅の質問ワード」</span>は、連続で踏んでもOKな安全ワード！<br>
+                    ただし<span class="text-yellow-300">5秒以内</span>にタップしないと即ゲームオーバー！
+                </li>
+            </ul>
+        </div>
+        <button id="start-btn" class="px-12 py-4 bg-red-600 hover:bg-red-500 text-white font-black rounded-full text-2xl shadow-[0_0_20px_rgba(220,38,38,0.6)] transition-transform active:scale-95">
+            会見を始める
+        </button>
+    </div>
+
+    <!-- リザルト画面 -->
+    <div id="result-screen" class="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 hidden transition-opacity duration-500 px-4">
+        <div id="result-box" class="bg-gray-800 p-8 rounded-3xl text-center max-w-lg w-full border-4 border-gray-600 shadow-2xl">
+            <h2 id="result-title" class="text-5xl font-black mb-4 drop-shadow-md">結果</h2>
+            <div id="result-face" class="text-7xl md:text-8xl mb-2 drop-shadow-lg"></div>
+            <div id="result-eval" class="text-3xl font-black mb-4"></div>
+            
+            <div class="bg-black/50 p-4 rounded-xl mb-6">
+                <div id="result-message" class="text-xl md:text-2xl font-bold leading-relaxed whitespace-pre-line text-yellow-300"></div>
+            </div>
+
+            <div class="text-lg text-gray-400 mb-8 font-bold" id="result-score-container">
+                重複せず質問できた数<br>
+                <span id="result-score" class="text-5xl text-white font-black drop-shadow-md"></span> <span class="text-2xl">回</span>
+            </div>
+            <button id="restart-btn" class="px-10 py-4 bg-white text-gray-900 hover:bg-gray-200 font-black rounded-full text-xl shadow-lg transition-transform active:scale-95">
+                もう一度挑む
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const MAX_HP = 100;
+    const GAME_DURATION = 30; 
+    const SPAWN_INTERVAL = 400; 
+    const UI_HEIGHT = 120; 
+    const DAMAGE_MULTIPLIER = 25; 
+    
+    const WORD_LIST = [
+        'AIについて', 
+        '会社責任について', 
+        '無責任すぎる', 
+        '被害総額は', 
+        '被害者に対して', 
+        'ホワイトハッカー', 
+        '喋り過ぎ'
+    ];
+
+    let hp = MAX_HP;
+    let timeLeft = GAME_DURATION;
+    let isPlaying = false;
+    let activeWords = []; 
+    let currentChain = 0;
+    let successCount = 0;
+    let lastTappedWord = "";
+    let isUrgentActive = false; 
+    
+    let loopId, spawnId, countdownId;
+    let lastFrameTime = 0;
+
+    const elContainer = document.getElementById('game-container');
+    const elHpText = document.getElementById('hp-text');
+    const elHpBar = document.getElementById('hp-bar');
+    const elScoreText = document.getElementById('score-text');
+    const elChainText = document.getElementById('chain-text');
+    const elTimerText = document.getElementById('timer-text');
+    const elBossFace = document.getElementById('boss-face');
+    const elWordsLayer = document.getElementById('words-layer');
+    const elDamageOverlay = document.getElementById('damage-overlay');
+    
+    const screenTitle = document.getElementById('title-screen');
+    const screenResult = document.getElementById('result-screen');
+    const elResultTitle = document.getElementById('result-title');
+    const elResultFace = document.getElementById('result-face');
+    const elResultEval = document.getElementById('result-eval');
+    const elResultMessage = document.getElementById('result-message');
+    const elResultScore = document.getElementById('result-score');
+    const elResultBox = document.getElementById('result-box');
+    const elResultScoreContainer = document.getElementById('result-score-container');
+
+    document.getElementById('start-btn').addEventListener('click', startGame);
+    document.getElementById('restart-btn').addEventListener('click', startGame);
+
+    function startGame() {
+        hp = MAX_HP;
+        timeLeft = GAME_DURATION;
+        isPlaying = true;
+        currentChain = 0;
+        successCount = 0;
+        lastTappedWord = "";
+        isUrgentActive = false;
+        
+        activeWords.forEach(w => {
+            if (w.isUrgent) clearTimeout(w.urgentTimer);
+            w.el.remove();
+        });
+        activeWords = [];
+
+        updateUI();
+        elTimerText.style.color = "white";
+        screenTitle.classList.add('hidden');
+        screenResult.classList.add('hidden');
+        elContainer.className = "relative w-full h-[100dvh] overflow-hidden bg-gradient-to-b from-gray-700 to-gray-900";
+        elBossFace.textContent = '👨‍💼';
+        elResultScoreContainer.classList.remove('hidden');
+
+        spawnId = setInterval(spawnWord, SPAWN_INTERVAL);
+        countdownId = setInterval(updateTimer, 100);
+        
+        lastFrameTime = performance.now();
+        loopId = requestAnimationFrame(gameLoop);
+    }
+
+    function endGame(isTimeUp, failReason = '') {
+        isPlaying = false;
+        clearInterval(spawnId);
+        clearInterval(countdownId);
+        cancelAnimationFrame(loopId);
+
+        screenResult.classList.remove('hidden');
+        elResultScore.textContent = successCount;
+        elResultBox.className = "bg-gray-800 p-8 rounded-3xl text-center max-w-lg w-full border-4 shadow-2xl";
+
+        if (isTimeUp && hp > 0) {
+            elResultTitle.textContent = "会見終了";
+            elResultTitle.style.color = "white";
+
+            if (successCount >= 40) {
+                elResultFace.textContent = '🌋🔥🤯(☝ ՞ਊ ՞)☝';
+                elResultEval.textContent = '社長120%';
+                elResultEval.className = 'text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-red-500 mb-4 animate-bounce';
+                elResultMessage.textContent = '「君は最高の記者だ！\n全てを語ろう！」';
+                elResultMessage.className = 'text-2xl font-bold leading-relaxed whitespace-pre-line text-yellow-300';
+                elResultBox.classList.add('border-yellow-400');
+                elContainer.classList.add('from-purple-900', 'to-red-900');
+            } else if (successCount >= 30) {
+                elResultFace.textContent = '🕺✨( ﾟ∀ﾟ)o彡゜';
+                elResultEval.textContent = '社長狂喜乱舞';
+                elResultEval.className = 'text-3xl font-black text-orange-400 mb-4';
+                elResultMessage.textContent = '「素晴らしい質問だ！\nもっと聞きたまえ！」';
+                elResultMessage.className = 'text-2xl font-bold leading-relaxed whitespace-pre-line text-orange-300';
+                elResultBox.classList.add('border-orange-500');
+                elContainer.classList.add('from-orange-800', 'to-yellow-900');
+            } else if (successCount >= 20) {
+                elResultFace.textContent = '( ¯﹀¯ )✧';
+                elResultEval.textContent = '社長満足';
+                elResultEval.className = 'text-3xl font-black text-blue-400 mb-4';
+                elResultMessage.textContent = '「なかなか良い着眼点ですね。\n真摯にお答えします。」';
+                elResultMessage.className = 'text-xl font-bold leading-relaxed whitespace-pre-line text-blue-300';
+                elResultBox.classList.add('border-blue-400');
+                elContainer.classList.add('from-blue-900', 'to-gray-900');
+            } else if (successCount >= 10) {
+                elResultFace.textContent = '( ￣っ￣)';
+                elResultEval.textContent = '社長不満';
+                elResultEval.className = 'text-3xl font-black text-gray-400 mb-4';
+                elResultMessage.textContent = '「その質問は\n先ほども申し上げた通り…」';
+                elResultMessage.className = 'text-xl font-bold leading-relaxed whitespace-pre-line text-gray-300';
+                elResultBox.classList.add('border-gray-500');
+            } else {
+                elResultFace.textContent = '( º言º)💢';
+                elResultEval.textContent = '通常クリア'; 
+                elResultEval.className = 'text-3xl font-black text-gray-300 mb-4';
+                elResultMessage.textContent = '「もうあなた方には\nお話しすることはありません！」';
+                elResultMessage.className = 'text-xl font-bold leading-relaxed whitespace-pre-line text-gray-400';
+                elResultBox.classList.add('border-gray-600');
+            }
+        } else {
+            elResultTitle.textContent = "退場処分！";
+            elResultTitle.style.color = "#ef4444"; 
+            elResultFace.textContent = '😤💢';
+            elResultEval.textContent = '社長の逆鱗に触れた';
+            elResultEval.className = 'text-3xl font-black text-red-600 mb-4';
+            elResultBox.classList.add('border-red-600', 'bg-red-950');
+            elResultScoreContainer.classList.add('hidden');
+
+            if (failReason === 'unbuttoned') {
+                elResultMessage.innerHTML = '「ちゃんとボタン閉めて。<br><span class="text-3xl text-red-400 font-black">あなたお詫びをしているのに<br>ボタン開けてどうするんだ！</span>」';
+            } else {
+                elResultMessage.innerHTML = '「<span class="text-4xl text-red-400 font-black">命の砂時計を<br>大事にしてください！</span>」';
+            }
+            elResultMessage.className = 'text-xl font-bold leading-relaxed whitespace-pre-line text-red-200';
+        }
+    }
+
+    function updateTimer() {
+        if (!isPlaying) return;
+        timeLeft -= 0.1;
+        if (timeLeft <= 0) {
+            timeLeft = 0;
+            elTimerText.textContent = '0.0';
+            if (hp > 0) endGame(true); 
+        } else {
+            elTimerText.textContent = timeLeft.toFixed(1);
+            if (timeLeft <= 5) elTimerText.style.color = "#f87171"; 
+        }
+    }
+
+    function spawnWord() {
+        if (!isPlaying) return;
+        if (!isUrgentActive && Math.random() < 0.1) {
+            spawnUrgentWord();
+            return;
+        }
+        const text = WORD_LIST[Math.floor(Math.random() * WORD_LIST.length)];
+        createWordBubble(text, false);
+    }
+
+    function spawnUrgentWord() {
+        isUrgentActive = true;
+        const text = WORD_LIST[Math.floor(Math.random() * WORD_LIST.length)];
+        createWordBubble(text, true);
+    }
+
+    function createWordBubble(text, isUrgent) {
+        const el = document.createElement('div');
+        el.className = `word-bubble pointer-events-auto ${isUrgent ? 'urgent-word' : ''}`;
+        
+        if (isUrgent) {
+            el.innerHTML = `
+                <div>${text}</div>
+                <div class="urgent-bar-bg"><div class="urgent-bar-fill"></div></div>
+            `;
+        } else {
+            el.textContent = text;
+        }
+
+        elWordsLayer.appendChild(el);
+
+        const containerW = elWordsLayer.clientWidth;
+        const containerH = elWordsLayer.clientHeight;
+
+        let x = Math.random() * (containerW - 160) + 20;
+        let y = 0;
+
+        if (isUrgent) {
+            y = containerH * 0.75 + (Math.random() * (containerH * 0.15));
+        } else {
+            const availableHeight = containerH - UI_HEIGHT - 100;
+            y = UI_HEIGHT + Math.random() * availableHeight;
+        }
+
+        const speed = isUrgent ? (4 + Math.random() * 2) : (2.5 + Math.random() * 2);
+        const angle = Math.random() * Math.PI * 2;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed * 0.7; 
+
+        el.style.transform = `translate(${x}px, ${y}px)`;
+
+        let urgentTimer = null;
+        if (isUrgent) {
+            urgentTimer = setTimeout(() => {
+                if (isPlaying) endGame(false, 'unbuttoned');
+            }, 5000);
+            
+            setTimeout(() => {
+                const bar = el.querySelector('.urgent-bar-fill');
+                if (bar) bar.style.width = '0%';
+            }, 50);
+        }
+
+        const wordData = { el, text, x, y, vx, vy, isUrgent, urgentTimer, width: 0, height: 0 };
+        
+        setTimeout(() => {
+            const rect = el.getBoundingClientRect();
+            wordData.width = rect.width;
+            wordData.height = rect.height;
+        }, 0);
+
+        el.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            handleWordTap(wordData, e.clientX, e.clientY);
+        });
+
+        activeWords.push(wordData);
+    }
+
+    function handleWordTap(wordData, clickX, clickY) {
+        if (!isPlaying) return;
+
+        if (wordData.isUrgent) {
+            clearTimeout(wordData.urgentTimer);
+            isUrgentActive = false;
+        }
+
+        const tappedText = wordData.text;
+
+        if (wordData.isUrgent) {
+            // 赤い点滅ワードは安全なので無条件でチェイン
+            successCount++;
+            currentChain++;
+            lastTappedWord = tappedText; 
+            showPopupText(`SAFE! ${currentChain} CHAIN!`, clickX, clickY, '#fca5a5');
+        } else {
+            if (tappedText !== lastTappedWord || lastTappedWord === "") {
+                // 成功
+                successCount++;
+                currentChain++;
+                lastTappedWord = tappedText;
+                showPopupText(`${currentChain} CHAIN!`, clickX, clickY, '#60a5fa');
+                elBossFace.textContent = '😳';
+                setTimeout(() => { if(isPlaying) elBossFace.textContent = '👨‍💼'; }, 300);
+            } else {
+                // 失敗
+                const count = Math.max(1, activeWords.filter(w => w.text === tappedText && !w.isUrgent).length);
+                const damage = count * DAMAGE_MULTIPLIER;
+                
+                currentChain = 0;
+                hp -= damage;
+                if (hp < 0) hp = 0;
+                
+                showPopupText(`-${damage} HP!`, clickX, clickY, '#f87171');
+                triggerPlayerDamage();
+                
+                elBossFace.textContent = '😏';
+                setTimeout(() => { if(isPlaying) elBossFace.textContent = '👨‍💼'; }, 400);
+
+                if (hp === 0) {
+                    endGame(false, 'hp');
+                }
+            }
+        }
+
+        updateUI();
+
+        wordData.el.style.transition = 'transform 0.1s, opacity 0.1s';
+        wordData.el.style.transform = `translate(${wordData.x}px, ${wordData.y}px) scale(1.3)`;
+        wordData.el.style.opacity = '0';
+        wordData.el.style.pointerEvents = 'none';
+        
+        setTimeout(() => wordData.el.remove(), 100);
+        activeWords = activeWords.filter(w => w !== wordData);
+    }
+
+    function updateUI() {
+        elHpText.textContent = Math.ceil(hp);
+        const hpPercent = (hp / MAX_HP) * 100;
+        elHpBar.style.width = `${hpPercent}%`;
+        
+        if (hpPercent < 30) {
+            elHpBar.className = "h-full w-full transition-all duration-200 bg-gradient-to-r from-red-800 to-red-600";
+        } else {
+            elHpBar.className = "h-full w-full transition-all duration-200 bg-gradient-to-r from-green-500 to-green-400";
+        }
+
+        elScoreText.textContent = successCount;
+        elChainText.textContent = currentChain;
+
+        if (currentChain > 1) {
+            elChainText.parentElement.classList.add('scale-110', 'bg-blue-900/80');
+            setTimeout(() => {
+                elChainText.parentElement.classList.remove('scale-110', 'bg-blue-900/80');
+            }, 150);
+        }
+    }
+
+    function showPopupText(text, x, y, color) {
+        const el = document.createElement('div');
+        el.className = 'popup-text text-3xl md:text-4xl';
+        el.textContent = text;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.color = color;
+        el.style.textShadow = '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000';
+        
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 800);
+    }
+
+    function triggerPlayerDamage() {
+        elDamageOverlay.classList.remove('animate-player-damage');
+        void elDamageOverlay.offsetWidth;
+        elDamageOverlay.classList.add('animate-player-damage');
+
+        elContainer.classList.remove('animate-shake');
+        void elContainer.offsetWidth;
+        elContainer.classList.add('animate-shake');
+    }
+
+    function gameLoop(timestamp) {
+        if (!isPlaying) return;
+
+        const dt = (timestamp - lastFrameTime) / 16.66; 
+        lastFrameTime = timestamp;
+
+        const containerW = elWordsLayer.clientWidth;
+        const containerH = elWordsLayer.clientHeight;
+
+        activeWords.forEach(w => {
+            w.x += w.vx * dt;
+            w.y += w.vy * dt;
+
+            const wWidth = w.width || 120;
+            const wHeight = w.height || 50;
+
+            if (w.x <= 0) {
+                w.x = 0;
+                w.vx *= -1;
+            } else if (w.x + wWidth >= containerW) {
+                w.x = containerW - wWidth;
+                w.vx *= -1;
+            }
+
+            if (w.y <= UI_HEIGHT) {
+                w.y = UI_HEIGHT;
+                w.vy *= -1;
+            } else if (w.y + wHeight >= containerH) {
+                w.y = containerH - wHeight;
+                w.vy *= -1;
+            }
+
+            w.el.style.transform = `translate(${w.x}px, ${w.y}px)`;
+        });
+
+        loopId = requestAnimationFrame(gameLoop);
+    }
+</script>
+</body>
+</html>
